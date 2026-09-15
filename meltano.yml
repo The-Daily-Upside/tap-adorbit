@@ -1,0 +1,13 @@
+version: 1
+plugins:
+  extractors:
+    - name: tap-adorbit
+      namespace: tap_adorbit
+      executable: tap-adorbit
+      settings:
+        - name: instance
+        - name: public_key
+        - name: private_key
+        - name: start_date
+        - name: page_size
+        - name: api_scheme

@@ -1,0 +1,7 @@
+{
+  "instance": "thedailyupside",
+  "public_key": "YOUR_PUBLIC_KEY",
+  "private_key": "YOUR_PRIVATE_KEY",
+  "page_size": 5,
+  "api_scheme": "https"
+}

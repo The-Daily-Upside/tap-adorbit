@@ -1,0 +1,7 @@
+.DS_Store
+venv
+.venv
+build/
+*.egg-info/
+config.json
+sample_responses/
