@@ -36,6 +36,8 @@ Companies, contacts, and orders document `changedsince` with format `YYYY-MM-DD`
 | `editorials` | Not in PDF | Exists in HATEOAS root as `/editorials` |
 | `vendors` | Not in PDF | Exists in HATEOAS root as `/vendors` |
 | `companyassets` | Not in PDF | Exists in HATEOAS root; returns `assets` collection |
+| `ad_positions` | GET `/ad-positions` | Placement names. `id` matches slot `channelId` |
+| `media_slot_items` | GET `/media-slot-item/{id}` | No list route. Full scan of every order, not limited by `start_date`, so a truncate-and-reload still finds older active service sales. Not-found (404 or `{"error": "Item not found."}`) is skipped; 405 and 500 fail the sync. `channelId` is the scheduled placement. Dagster truncates the table before each full refresh; this scan then reloads only service sales that still exist |
 
 ## Schema strategy
 

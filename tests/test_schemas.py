@@ -3,7 +3,7 @@
 import json
 
 from tap_adorbit.schemas import STREAM_SCHEMAS
-from tap_adorbit.streams import AdOrbitStream
+from tap_adorbit.streams import AdOrbitStream, MediaSlotItemsStream
 
 
 def test_companies_schema_includes_business_fields():
@@ -28,6 +28,30 @@ def test_normalize_record_serializes_nested_values():
     raw = json.loads(normalized["_raw"])
     assert raw["links"] == {"self": "https://example.com/companies/1"}
     assert raw["primary_contact"] == {"name": "Jane Doe"}
+
+
+def test_slot_channel_schemas_declare_join_keys():
+    assert STREAM_SCHEMAS["ad_positions"]["properties"]["name"]["type"]
+    slot = STREAM_SCHEMAS["media_slot_items"]["properties"]
+    assert "channelId" in slot
+    assert "order_modified" in slot
+
+
+def test_slot_channel_id_is_stored_as_text():
+    record = {"id": 3877, "channelId": 5.0, "gross": 12.5}
+    MediaSlotItemsStream._stringify_scalars(record)
+    assert record == {"id": "3877", "channelId": "5", "gross": "12.5"}
+
+
+def test_service_sale_ids_are_stringified():
+    order = {
+        "serviceSales": [
+            {"id": 3877, "serviceName": "Advisor Upside - Weekday"},
+            {"id": None},
+            "not-a-sale",
+        ]
+    }
+    assert MediaSlotItemsStream._service_sale_ids(order) == ["3877"]
 
 
 def test_unknown_fields_are_kept_in_raw_but_not_emitted():

@@ -50,6 +50,7 @@ class AdOrbitClient:
         uri: str,
         extra_headers: Optional[Dict[str, str]] = None,
         params: Optional[Dict[str, str]] = None,
+        missing_ok_statuses: Optional[set] = None,
     ) -> Any:
         """Make an authenticated request and return the JSON response."""
         if params:
@@ -65,13 +66,17 @@ class AdOrbitClient:
         if extra_headers:
             headers.update(extra_headers)
 
+        # 429 is Ad Orbit throttling. 502/503/504 are the gateway blips that abort
+        # a long orders page (HTML "Bad Gateway") after rows have already loaded.
+        retryable = {429, 502, 503, 504}
         max_retries = 8
         backoff = 5
         for attempt in range(max_retries):
             response = requests.request(method, signed_uri, headers=headers, timeout=120)
-            if response.status_code == 429:
+            if response.status_code in retryable and attempt < max_retries - 1:
                 logger.warning(
-                    "429 Too Many Requests for %s (attempt %s), backing off %s seconds.",
+                    "Ad Orbit API %s for %s (attempt %s), backing off %s seconds.",
+                    response.status_code,
                     signed_uri,
                     attempt + 1,
                     backoff,
@@ -79,6 +84,8 @@ class AdOrbitClient:
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 120)
                 continue
+            if missing_ok_statuses and response.status_code in missing_ok_statuses:
+                return None
             if response.status_code >= 400:
                 logger.error(
                     "Ad Orbit API error %s for %s: %s",
@@ -89,7 +96,19 @@ class AdOrbitClient:
             response.raise_for_status()
             return response.json()
 
-        raise RuntimeError(f"Max retries exceeded for {signed_uri} due to throttling.")
+        raise RuntimeError(f"Max retries exceeded for {signed_uri}.")
+
+    def get_optional(self, uri: str) -> Optional[Dict[str, Any]]:
+        """GET one record. A confirmed miss returns None.
+
+        Slot lookups use the service-sale id. A line that is not a slot returns
+        HTTP 404 or ``{"error": "Item not found."}``. HTTP 405 means the route
+        itself is wrong, and HTTP 500 is a server failure; both propagate.
+        """
+        payload = self.request("GET", uri, missing_ok_statuses={404})
+        if not isinstance(payload, dict) or "id" not in payload:
+            return None
+        return payload
 
     def get_root(self) -> Dict[str, Any]:
         """Fetch and cache the root endpoint map (HATEOAS links)."""

@@ -1,6 +1,7 @@
 """Ad Orbit stream definitions."""
 
 import json
+import time
 from typing import Any, Dict, Iterable, Optional
 
 from singer_sdk.streams import Stream
@@ -177,3 +178,111 @@ class CompanyAssetsStream(AdOrbitStream):
     endpoint_key = "companyassets"
     records_key = "assets"
     schema = STREAM_SCHEMAS["companyassets"]
+
+
+class AdPositionsStream(AdOrbitStream):
+    """Digital placement names. Slot items store this id as channelId.
+
+    This catalog is not incremental. Sending changedsince would drop positions
+    the API does not consider changed, and the service-sale join would miss them.
+    """
+
+    name = "ad_positions"
+    endpoint_key = "ad-positions"
+    schema = STREAM_SCHEMAS["ad_positions"]
+
+    def get_records(self, context: Optional[dict]) -> Iterable[Dict[str, Any]]:
+        allowed_keys = set(self.schema["properties"].keys())
+        for record in self._client.get_paginated(
+            self.endpoint_key,
+            limit=self.page_size,
+            changed_since=None,
+            records_key=self.records_key,
+        ):
+            normalized = self._normalize_record(record, self.name)
+            yield {key: normalized[key] for key in allowed_keys if key in normalized}
+
+
+class MediaSlotItemsStream(AdOrbitStream):
+    """One slot record per service-sale id.
+
+    GET /orders leaves scheduledChannel null. GET /media-slot-item/{serviceSaleId}
+    returns channelId, which joins to ad_positions.name. There is no list
+    endpoint, so this walks every order the API returns, ignoring start_date.
+    A truncate-and-reload must see service sales whose orders were last
+    modified before start_date. Lines that are not slots return a not-found
+    payload and are skipped. An order set with no slots finishes empty.
+
+    Removed service sales are not soft-deleted here. The destination loader is
+    append-only, so a tombstone row would not replace the previous one. The
+    Dagster non-core job truncates media_slot_items before each full refresh,
+    and this full scan then reloads only the service sales that still exist.
+    """
+
+    name = "media_slot_items"
+    endpoint_key = "media-slot-item"
+    schema = STREAM_SCHEMAS["media_slot_items"]
+
+    @staticmethod
+    def _service_sale_ids(order: Dict[str, Any]) -> list[str]:
+        sales = order.get("serviceSales") or []
+        if isinstance(sales, str):
+            try:
+                sales = json.loads(sales)
+            except json.JSONDecodeError:
+                return []
+        if not isinstance(sales, list):
+            return []
+        ids: list[str] = []
+        for sale in sales:
+            if not isinstance(sale, dict) or sale.get("id") in (None, ""):
+                continue
+            ids.append(str(sale["id"]))
+        return ids
+
+    @staticmethod
+    def _stringify_scalars(record: Dict[str, Any]) -> None:
+        for key, value in list(record.items()):
+            if isinstance(value, bool) or value is None:
+                continue
+            if isinstance(value, float) and value.is_integer():
+                record[key] = str(int(value))
+            elif isinstance(value, (int, float)):
+                record[key] = str(value)
+
+    def get_records(self, context: Optional[dict]) -> Iterable[Dict[str, Any]]:
+        # Do not apply start_date or a bookmark. After the destination table
+        # is truncated, any order older than start_date would lose its channel.
+        del context
+
+        item_template = self._client.get_endpoint_url(self.endpoint_key)
+        allowed_keys = set(self.schema["properties"].keys())
+        seen: set[str] = set()
+        found = 0
+        skipped = 0
+        for order in self._client.get_paginated(
+            "orders",
+            limit=self.page_size,
+            changed_since=None,
+        ):
+            modified = order.get("order_modified") or order.get("createDate")
+            for sale_id in self._service_sale_ids(order):
+                if sale_id in seen:
+                    continue
+                seen.add(sale_id)
+                payload = self._client.get_optional(item_template.replace("{id}", sale_id))
+                time.sleep(0.05)
+                if not payload:
+                    skipped += 1
+                    continue
+                payload["order_modified"] = modified
+                self._stringify_scalars(payload)
+                normalized = self._normalize_record(payload, self.name)
+                found += 1
+                yield {key: normalized[key] for key in allowed_keys if key in normalized}
+
+        self.logger.info(
+            "media_slot_items: %s slot rows, %s service sales were not slot items.",
+            found,
+            skipped,
+        )
