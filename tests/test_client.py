@@ -216,6 +216,9 @@ def test_known_slot_still_loading_keeps_non_slot_500s(monkeypatch):
     for sale_id in range(1, 31):
         assert client.get_optional(f"https://stage.api.adorbit.com/media-slot-item/{sale_id}") is None
     assert calls["good"] == 1
+    for sale_id in range(31, 2 * _KNOWN_SLOT_RECHECK_EVERY + 1):
+        assert client.get_optional(f"https://stage.api.adorbit.com/media-slot-item/{sale_id}") is None
+        assert calls["good"] == 1 + sale_id // _KNOWN_SLOT_RECHECK_EVERY
 
 
 def test_get_optional_ignores_not_found_payload(monkeypatch):
