@@ -11,9 +11,10 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-# One empty 500 is Ad Orbit's response for a service sale that is not a slot.
-# Five in a row, with no other slot response between them, is an outage.
-_EMPTY_500_STREAK_LIMIT = 5
+# An empty 500 is Ad Orbit's response for a service sale that is not a slot.
+# After this many of them, re-fetch one slot that already loaded. That request
+# failing is an outage. The non-slot responses themselves are not.
+_KNOWN_SLOT_RECHECK_EVERY = 5
 _NOT_A_SLOT_500 = object()
 
 
@@ -34,7 +35,8 @@ class AdOrbitClient:
         self.public_key = public_key
         self.private_key = private_key
         self._root: Optional[Dict[str, Any]] = None
-        self._empty_500_streak = 0
+        self._known_slot_uri: Optional[str] = None
+        self._empty_500s_since_recheck = 0
 
     def _sign(self, method: str, uri: str) -> str:
         """Generate the base64-encoded HMAC-SHA512 signature for a request."""
@@ -99,19 +101,9 @@ class AdOrbitClient:
                 and response.status_code == 500
                 and not body
             ):
-                self._empty_500_streak += 1
-                if self._empty_500_streak >= _EMPTY_500_STREAK_LIMIT:
-                    logger.error(
-                        "Ad Orbit returned %s empty 500s in a row for %s; failing the sync.",
-                        self._empty_500_streak,
-                        signed_uri,
-                    )
-                    response.raise_for_status()
                 logger.warning(
-                    "Ad Orbit returned an empty 500 for %s (%s in a row); "
-                    "treating it as not a slot item.",
+                    "Ad Orbit returned an empty 500 for %s; treating it as not a slot item.",
                     signed_uri,
-                    self._empty_500_streak,
                 )
                 return _NOT_A_SLOT_500
             if response.status_code >= 400:
@@ -126,13 +118,31 @@ class AdOrbitClient:
 
         raise RuntimeError(f"Max retries exceeded for {signed_uri}.")
 
+    def _recheck_known_slot(self) -> None:
+        """Fail when a slot that already loaded in this run no longer loads."""
+        known = self._known_slot_uri
+        if not known:
+            return
+        logger.warning("Rechecking slot %s after empty 500 responses.", known)
+        payload = self.request(
+            "GET",
+            known,
+            missing_ok_statuses={404},
+            empty_500_as_missing=True,
+        )
+        if payload is _NOT_A_SLOT_500 or not isinstance(payload, dict) or "id" not in payload:
+            raise requests.HTTPError(
+                f"500 Server Error: previously loaded slot {known} no longer returns a record"
+            )
+
     def get_optional(self, uri: str) -> Optional[Dict[str, Any]]:
         """GET one record. A confirmed miss returns None.
 
         Slot lookups use the service-sale id. A line that is not a slot returns
         HTTP 404, ``{"error": "Item not found."}``, or an empty HTTP 500.
-        HTTP 405, a 500 with a body, and five empty 500s in a row propagate.
-        A successful order-list page does not clear that streak.
+        HTTP 405 and a 500 with a body propagate. Empty 500s are not an outage
+        by themselves. After several of them, a slot that already loaded in
+        this run is fetched again, and that request failing propagates.
         """
         payload = self.request(
             "GET",
@@ -141,12 +151,18 @@ class AdOrbitClient:
             empty_500_as_missing=True,
         )
         if payload is _NOT_A_SLOT_500:
+            self._empty_500s_since_recheck += 1
+            if (
+                self._known_slot_uri
+                and self._empty_500s_since_recheck >= _KNOWN_SLOT_RECHECK_EVERY
+            ):
+                self._recheck_known_slot()
+                self._empty_500s_since_recheck = 0
             return None
-        # A 404, a not-found body, or a real slot breaks the empty-500 streak.
-        # Order-list pages must not: they succeed while this endpoint is down.
-        self._empty_500_streak = 0
+        self._empty_500s_since_recheck = 0
         if not isinstance(payload, dict) or "id" not in payload:
             return None
+        self._known_slot_uri = uri
         return payload
 
     def get_root(self) -> Dict[str, Any]:
