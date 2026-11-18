@@ -208,14 +208,15 @@ class MediaSlotItemsStream(AdOrbitStream):
 
     GET /orders leaves scheduledChannel null. GET /media-slot-item/{serviceSaleId}
     returns channelId, which joins to ad_positions.name. There is no list
-    endpoint, so this walks every order since start_date and requests each
-    service-sale id. Lines that are not slots return a not-found payload and
-    are skipped. An order set with no slots finishes empty.
+    endpoint, so this walks every order the API returns, ignoring start_date.
+    A truncate-and-reload must see service sales whose orders were last
+    modified before start_date. Lines that are not slots return a not-found
+    payload and are skipped. An order set with no slots finishes empty.
 
-    Removed service sales are not tombstoned here. The destination loader is
-    append-only, so a soft-delete row would not replace the previous one.
-    The Dagster non-core job truncates media_slot_items before each full
-    refresh, which drops channels for service sales that are gone.
+    Removed service sales are not soft-deleted here. The destination loader is
+    append-only, so a tombstone row would not replace the previous one. The
+    Dagster non-core job truncates media_slot_items before each full refresh,
+    and this full scan then reloads only the service sales that still exist.
     """
 
     name = "media_slot_items"
@@ -250,11 +251,9 @@ class MediaSlotItemsStream(AdOrbitStream):
                 record[key] = str(value)
 
     def get_records(self, context: Optional[dict]) -> Iterable[Dict[str, Any]]:
-        # Always scan from start_date. A bookmark would skip orders whose
-        # service sales were removed and leave their previous channel rows in
-        # place until the next truncate.
+        # Do not apply start_date or a bookmark. After the destination table
+        # is truncated, any order older than start_date would lose its channel.
         del context
-        changed_since = self.config.get("start_date")
 
         item_template = self._client.get_endpoint_url(self.endpoint_key)
         allowed_keys = set(self.schema["properties"].keys())
@@ -264,7 +263,7 @@ class MediaSlotItemsStream(AdOrbitStream):
         for order in self._client.get_paginated(
             "orders",
             limit=self.page_size,
-            changed_since=changed_since,
+            changed_since=None,
         ):
             modified = order.get("order_modified") or order.get("createDate")
             for sale_id in self._service_sale_ids(order):
@@ -276,7 +275,7 @@ class MediaSlotItemsStream(AdOrbitStream):
                 if not payload:
                     skipped += 1
                     continue
-                payload["order_modified"] = modified or changed_since
+                payload["order_modified"] = modified
                 self._stringify_scalars(payload)
                 normalized = self._normalize_record(payload, self.name)
                 found += 1
