@@ -79,6 +79,138 @@ def test_get_optional_raises_on_unexpected_http_error(monkeypatch, status_code):
         client.get_optional("https://stage.api.adorbit.com/media-slot-item/1")
 
 
+def test_get_optional_treats_one_empty_500_as_missing(monkeypatch):
+    class _Response:
+        status_code = 500
+        text = ""
+
+        def raise_for_status(self):
+            raise AssertionError("a single empty 500 is not a slot item")
+
+    monkeypatch.setattr(
+        "tap_adorbit.client.requests.request",
+        lambda *args, **kwargs: _Response(),
+    )
+    client = AdOrbitClient("stage", "pub", "priv")
+    assert client.get_optional("https://stage.api.adorbit.com/media-slot-item/8066") is None
+
+
+def test_consecutive_empty_500s_are_not_an_outage(monkeypatch):
+    class _Response:
+        status_code = 500
+        text = ""
+
+        def raise_for_status(self):
+            raise AssertionError("non-slot empty 500s must not abort the sync")
+
+    monkeypatch.setattr(
+        "tap_adorbit.client.requests.request",
+        lambda *args, **kwargs: _Response(),
+    )
+    client = AdOrbitClient("stage", "pub", "priv")
+    for sale_id in range(8060, 8070):
+        uri = f"https://stage.api.adorbit.com/media-slot-item/{sale_id}"
+        assert client.get_optional(uri) is None
+
+
+def test_empty_500s_fail_when_a_known_slot_stops_loading(monkeypatch):
+    class _Response:
+        def __init__(self, status_code, payload=None):
+            self.status_code = status_code
+            self.text = ""
+            self._payload = payload or {}
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise requests.HTTPError(str(self.status_code))
+
+        def json(self):
+            return self._payload
+
+    good = "https://stage.api.adorbit.com/media-slot-item/3877"
+    loads = {"n": 0}
+
+    def _request(method, uri, headers, timeout):
+        if uri == good:
+            loads["n"] += 1
+            if loads["n"] == 1:
+                return _Response(200, {"id": 3877, "channelId": 5})
+            return _Response(500)
+        return _Response(500)
+
+    monkeypatch.setattr("tap_adorbit.client.requests.request", _request)
+    client = AdOrbitClient("stage", "pub", "priv")
+    assert client.get_optional(good)["channelId"] == 5
+    for sale_id in range(1, 5):
+        assert client.get_optional(f"https://stage.api.adorbit.com/media-slot-item/{sale_id}") is None
+    with pytest.raises(requests.HTTPError, match="empty HTTP 500") as raised:
+        client.get_optional("https://stage.api.adorbit.com/media-slot-item/5")
+    assert "500 Server Error" not in str(raised.value)
+
+
+def test_recheck_reports_404_when_the_known_slot_is_missing(monkeypatch):
+    class _Response:
+        def __init__(self, status_code, payload=None):
+            self.status_code = status_code
+            self.text = ""
+            self._payload = payload or {}
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise requests.HTTPError(str(self.status_code))
+
+        def json(self):
+            return self._payload
+
+    good = "https://stage.api.adorbit.com/media-slot-item/3877"
+    loads = {"n": 0}
+
+    def _request(method, uri, headers, timeout):
+        if uri == good:
+            loads["n"] += 1
+            if loads["n"] == 1:
+                return _Response(200, {"id": 3877, "channelId": 5})
+            return _Response(404)
+        return _Response(500)
+
+    monkeypatch.setattr("tap_adorbit.client.requests.request", _request)
+    client = AdOrbitClient("stage", "pub", "priv")
+    client.get_optional(good)
+    for sale_id in range(1, 5):
+        client.get_optional(f"https://stage.api.adorbit.com/media-slot-item/{sale_id}")
+    with pytest.raises(requests.HTTPError, match="HTTP 404") as raised:
+        client.get_optional("https://stage.api.adorbit.com/media-slot-item/5")
+    assert "500" not in str(raised.value)
+
+
+def test_known_slot_still_loading_keeps_non_slot_500s(monkeypatch):
+    class _Response:
+        def __init__(self, status_code, payload=None):
+            self.status_code = status_code
+            self.text = ""
+            self._payload = payload or {}
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise AssertionError(f"status {self.status_code} should not fail the sync")
+
+        def json(self):
+            return self._payload
+
+    good = "https://stage.api.adorbit.com/media-slot-item/3877"
+
+    def _request(method, uri, headers, timeout):
+        if uri == good:
+            return _Response(200, {"id": 3877, "channelId": 5})
+        return _Response(500)
+
+    monkeypatch.setattr("tap_adorbit.client.requests.request", _request)
+    client = AdOrbitClient("stage", "pub", "priv")
+    assert client.get_optional(good)["id"] == 3877
+    for sale_id in range(1, 7):
+        assert client.get_optional(f"https://stage.api.adorbit.com/media-slot-item/{sale_id}") is None
+
+
 def test_get_optional_ignores_not_found_payload(monkeypatch):
     client = AdOrbitClient("stage", "pub", "priv")
     monkeypatch.setattr(client, "request", lambda *args, **kwargs: {"error": "Item not found."})
