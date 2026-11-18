@@ -11,6 +11,10 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+# One empty 500 is Ad Orbit's response for a service sale that is not a slot.
+# A run of them is an outage, and the sync should fail instead of skipping the rest.
+_EMPTY_500_STREAK_LIMIT = 5
+
 
 class AdOrbitClient:
     """Client for Ad Orbit REST API with HMAC-SHA512 authentication."""
@@ -29,6 +33,7 @@ class AdOrbitClient:
         self.public_key = public_key
         self.private_key = private_key
         self._root: Optional[Dict[str, Any]] = None
+        self._empty_500_streak = 0
 
     def _sign(self, method: str, uri: str) -> str:
         """Generate the base64-encoded HMAC-SHA512 signature for a request."""
@@ -51,6 +56,7 @@ class AdOrbitClient:
         extra_headers: Optional[Dict[str, str]] = None,
         params: Optional[Dict[str, str]] = None,
         missing_ok_statuses: Optional[set] = None,
+        empty_500_as_missing: bool = False,
     ) -> Any:
         """Make an authenticated request and return the JSON response."""
         if params:
@@ -85,7 +91,26 @@ class AdOrbitClient:
                 backoff = min(backoff * 2, 120)
                 continue
             if missing_ok_statuses and response.status_code in missing_ok_statuses:
+                self._empty_500_streak = 0
                 return None
+            body = (response.text or "").strip()
+            if (
+                empty_500_as_missing
+                and response.status_code == 500
+                and not body
+            ):
+                self._empty_500_streak += 1
+                logger.warning(
+                    "Ad Orbit returned an empty 500 for %s (%s in a row); "
+                    "treating it as not a slot item.",
+                    signed_uri,
+                    self._empty_500_streak,
+                )
+                if self._empty_500_streak >= _EMPTY_500_STREAK_LIMIT:
+                    response.raise_for_status()
+                return None
+            if response.status_code < 400:
+                self._empty_500_streak = 0
             if response.status_code >= 400:
                 logger.error(
                     "Ad Orbit API error %s for %s: %s",
@@ -102,10 +127,15 @@ class AdOrbitClient:
         """GET one record. A confirmed miss returns None.
 
         Slot lookups use the service-sale id. A line that is not a slot returns
-        HTTP 404 or ``{"error": "Item not found."}``. HTTP 405 means the route
-        itself is wrong, and HTTP 500 is a server failure; both propagate.
+        HTTP 404, ``{"error": "Item not found."}``, or an empty HTTP 500.
+        HTTP 405, a 500 with a body, and five empty 500s in a row propagate.
         """
-        payload = self.request("GET", uri, missing_ok_statuses={404})
+        payload = self.request(
+            "GET",
+            uri,
+            missing_ok_statuses={404},
+            empty_500_as_missing=True,
+        )
         if not isinstance(payload, dict) or "id" not in payload:
             return None
         return payload

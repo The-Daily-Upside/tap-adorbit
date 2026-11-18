@@ -79,6 +79,42 @@ def test_get_optional_raises_on_unexpected_http_error(monkeypatch, status_code):
         client.get_optional("https://stage.api.adorbit.com/media-slot-item/1")
 
 
+def test_get_optional_treats_one_empty_500_as_missing(monkeypatch):
+    class _Response:
+        status_code = 500
+        text = ""
+
+        def raise_for_status(self):
+            raise AssertionError("a single empty 500 is not a slot item")
+
+    monkeypatch.setattr(
+        "tap_adorbit.client.requests.request",
+        lambda *args, **kwargs: _Response(),
+    )
+    client = AdOrbitClient("stage", "pub", "priv")
+    assert client.get_optional("https://stage.api.adorbit.com/media-slot-item/8066") is None
+
+
+def test_get_optional_raises_after_five_empty_500s(monkeypatch):
+    class _Response:
+        status_code = 500
+        text = "   "
+
+        def raise_for_status(self):
+            raise requests.HTTPError("500")
+
+    monkeypatch.setattr(
+        "tap_adorbit.client.requests.request",
+        lambda *args, **kwargs: _Response(),
+    )
+    client = AdOrbitClient("stage", "pub", "priv")
+    uri = "https://stage.api.adorbit.com/media-slot-item/8066"
+    for _ in range(4):
+        assert client.get_optional(uri) is None
+    with pytest.raises(requests.HTTPError):
+        client.get_optional(uri)
+
+
 def test_get_optional_ignores_not_found_payload(monkeypatch):
     client = AdOrbitClient("stage", "pub", "priv")
     monkeypatch.setattr(client, "request", lambda *args, **kwargs: {"error": "Item not found."})

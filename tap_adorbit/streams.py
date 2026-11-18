@@ -211,7 +211,8 @@ class MediaSlotItemsStream(AdOrbitStream):
     endpoint, so this walks every order the API returns, ignoring start_date.
     A truncate-and-reload must see service sales whose orders were last
     modified before start_date. Lines that are not slots return a not-found
-    payload and are skipped. An order set with no slots finishes empty.
+    payload or an empty HTTP 500 and are skipped. A 500 with a body, or five
+    empty 500s in a row, fails the sync. An order set with no slots finishes empty.
 
     Removed service sales are not soft-deleted here. The destination loader is
     append-only, so a tombstone row would not replace the previous one. The
