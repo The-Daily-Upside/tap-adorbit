@@ -1,5 +1,8 @@
 """Unit tests for Ad Orbit response parsing."""
 
+import pytest
+import requests
+
 from tap_adorbit.client import AdOrbitClient
 
 
@@ -35,16 +38,16 @@ def test_pagination_params_omit_changedsince_when_not_set():
     assert params == {}
 
 
-def test_request_missing_ok_status_returns_none(monkeypatch):
+def test_get_optional_treats_404_as_missing(monkeypatch):
     class _Response:
-        status_code = 500
+        status_code = 404
         text = ""
 
         def raise_for_status(self):
-            raise AssertionError("500 should be treated as a missing slot item")
+            raise AssertionError("404 should be treated as a missing slot item")
 
         def json(self):
-            raise AssertionError("empty 500 body is not JSON")
+            raise AssertionError("404 body is not parsed")
 
     monkeypatch.setattr(
         "tap_adorbit.client.requests.request",
@@ -52,6 +55,28 @@ def test_request_missing_ok_status_returns_none(monkeypatch):
     )
     client = AdOrbitClient("stage", "pub", "priv")
     assert client.get_optional("https://stage.api.adorbit.com/media-slot-item/1") is None
+
+
+@pytest.mark.parametrize("status_code", [405, 500])
+def test_get_optional_raises_on_unexpected_http_error(monkeypatch, status_code):
+    class _Response:
+        def __init__(self):
+            self.status_code = status_code
+            self.text = "nope"
+
+        def raise_for_status(self):
+            raise requests.HTTPError(f"{self.status_code}")
+
+        def json(self):
+            raise AssertionError("error body should not be parsed as a record")
+
+    monkeypatch.setattr(
+        "tap_adorbit.client.requests.request",
+        lambda *args, **kwargs: _Response(),
+    )
+    client = AdOrbitClient("stage", "pub", "priv")
+    with pytest.raises(requests.HTTPError):
+        client.get_optional("https://stage.api.adorbit.com/media-slot-item/1")
 
 
 def test_get_optional_ignores_not_found_payload(monkeypatch):

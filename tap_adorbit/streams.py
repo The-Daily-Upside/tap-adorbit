@@ -193,7 +193,6 @@ class AdPositionsStream(AdOrbitStream):
 
     def get_records(self, context: Optional[dict]) -> Iterable[Dict[str, Any]]:
         allowed_keys = set(self.schema["properties"].keys())
-        count = 0
         for record in self._client.get_paginated(
             self.endpoint_key,
             limit=self.page_size,
@@ -201,10 +200,7 @@ class AdPositionsStream(AdOrbitStream):
             records_key=self.records_key,
         ):
             normalized = self._normalize_record(record, self.name)
-            count += 1
             yield {key: normalized[key] for key in allowed_keys if key in normalized}
-        if count == 0:
-            raise RuntimeError("ad_positions returned no placement names.")
 
 
 class MediaSlotItemsStream(AdOrbitStream):
@@ -212,13 +208,18 @@ class MediaSlotItemsStream(AdOrbitStream):
 
     GET /orders leaves scheduledChannel null. GET /media-slot-item/{serviceSaleId}
     returns channelId, which joins to ad_positions.name. There is no list
-    endpoint, so this walks orders and requests each service-sale id. Lines that
-    are not slots return a not-found payload and are skipped.
+    endpoint, so this walks every order since start_date and requests each
+    service-sale id. Lines that are not slots return a not-found payload and
+    are skipped. An order set with no slots finishes empty.
+
+    Removed service sales are not tombstoned here. The destination loader is
+    append-only, so a soft-delete row would not replace the previous one.
+    The Dagster non-core job truncates media_slot_items before each full
+    refresh, which drops channels for service sales that are gone.
     """
 
     name = "media_slot_items"
     endpoint_key = "media-slot-item"
-    replication_key = "order_modified"
     schema = STREAM_SCHEMAS["media_slot_items"]
 
     @staticmethod
@@ -249,10 +250,11 @@ class MediaSlotItemsStream(AdOrbitStream):
                 record[key] = str(value)
 
     def get_records(self, context: Optional[dict]) -> Iterable[Dict[str, Any]]:
+        # Always scan from start_date. A bookmark would skip orders whose
+        # service sales were removed and leave their previous channel rows in
+        # place until the next truncate.
+        del context
         changed_since = self.config.get("start_date")
-        bookmark = self.get_starting_replication_key_value(context)
-        if bookmark:
-            changed_since = bookmark
 
         item_template = self._client.get_endpoint_url(self.endpoint_key)
         allowed_keys = set(self.schema["properties"].keys())
@@ -285,8 +287,3 @@ class MediaSlotItemsStream(AdOrbitStream):
             found,
             skipped,
         )
-        if found == 0:
-            raise RuntimeError(
-                "media_slot_items produced no slot records "
-                f"({skipped} service sales were not slots)."
-            )

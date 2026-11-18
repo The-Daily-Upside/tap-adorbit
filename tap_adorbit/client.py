@@ -99,12 +99,13 @@ class AdOrbitClient:
         raise RuntimeError(f"Max retries exceeded for {signed_uri}.")
 
     def get_optional(self, uri: str) -> Optional[Dict[str, Any]]:
-        """GET one record. A missing or wrong-type id returns None.
+        """GET one record. A confirmed miss returns None.
 
-        Slot lookups use the service-sale id. Reserved and other line types
-        answer 500 or ``{"error": "Item not found."}`` for that same id.
+        Slot lookups use the service-sale id. A line that is not a slot returns
+        HTTP 404 or ``{"error": "Item not found."}``. HTTP 405 means the route
+        itself is wrong, and HTTP 500 is a server failure; both propagate.
         """
-        payload = self.request("GET", uri, missing_ok_statuses={404, 405, 500})
+        payload = self.request("GET", uri, missing_ok_statuses={404})
         if not isinstance(payload, dict) or "id" not in payload:
             return None
         return payload
