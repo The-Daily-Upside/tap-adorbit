@@ -132,8 +132,22 @@ class AdOrbitClient:
         )
         if payload is _NOT_A_SLOT_500 or not isinstance(payload, dict) or "id" not in payload:
             raise requests.HTTPError(
-                f"500 Server Error: previously loaded slot {known} no longer returns a record"
+                f"Previously loaded slot {known} no longer returns a record "
+                f"({self._recheck_outcome(payload)})"
             )
+
+    @staticmethod
+    def _recheck_outcome(payload: Any) -> str:
+        if payload is _NOT_A_SLOT_500:
+            return "empty HTTP 500"
+        if payload is None:
+            return "HTTP 404"
+        if isinstance(payload, dict):
+            detail = payload.get("error")
+            if detail:
+                return f"response without an id: {detail}"
+            return "response without an id"
+        return type(payload).__name__
 
     def get_optional(self, uri: str) -> Optional[Dict[str, Any]]:
         """GET one record. A confirmed miss returns None.
