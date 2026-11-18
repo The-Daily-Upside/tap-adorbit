@@ -115,6 +115,58 @@ def test_get_optional_raises_after_five_empty_500s(monkeypatch):
         client.get_optional(uri)
 
 
+def test_empty_500_streak_ignores_successful_list_pages(monkeypatch):
+    class _Response:
+        def __init__(self, status_code, text):
+            self.status_code = status_code
+            self.text = text
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise requests.HTTPError(str(self.status_code))
+
+        def json(self):
+            return [{"id": "1"}]
+
+    calls = {"n": 0}
+
+    def _request(method, uri, headers, timeout):
+        calls["n"] += 1
+        if calls["n"] == 5:
+            return _Response(200, "")
+        return _Response(500, "")
+
+    monkeypatch.setattr("tap_adorbit.client.requests.request", _request)
+    client = AdOrbitClient("stage", "pub", "priv")
+    slot = "https://stage.api.adorbit.com/media-slot-item/8066"
+    for _ in range(4):
+        assert client.get_optional(slot) is None
+    assert client.request("GET", "https://stage.api.adorbit.com/orders") == [{"id": "1"}]
+    with pytest.raises(requests.HTTPError):
+        client.get_optional(slot)
+
+
+def test_empty_500_streak_resets_after_a_404(monkeypatch):
+    class _Response:
+        def __init__(self, status_code):
+            self.status_code = status_code
+            self.text = ""
+
+        def raise_for_status(self):
+            raise requests.HTTPError(str(self.status_code))
+
+    statuses = iter([500, 500, 500, 500, 404, 500, 500, 500, 500])
+
+    monkeypatch.setattr(
+        "tap_adorbit.client.requests.request",
+        lambda *args, **kwargs: _Response(next(statuses)),
+    )
+    client = AdOrbitClient("stage", "pub", "priv")
+    uri = "https://stage.api.adorbit.com/media-slot-item/8066"
+    for _ in range(9):
+        assert client.get_optional(uri) is None
+
+
 def test_get_optional_ignores_not_found_payload(monkeypatch):
     client = AdOrbitClient("stage", "pub", "priv")
     monkeypatch.setattr(client, "request", lambda *args, **kwargs: {"error": "Item not found."})

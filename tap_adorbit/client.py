@@ -12,8 +12,9 @@ import requests
 logger = logging.getLogger(__name__)
 
 # One empty 500 is Ad Orbit's response for a service sale that is not a slot.
-# A run of them is an outage, and the sync should fail instead of skipping the rest.
+# Five in a row, with no other slot response between them, is an outage.
 _EMPTY_500_STREAK_LIMIT = 5
+_NOT_A_SLOT_500 = object()
 
 
 class AdOrbitClient:
@@ -91,7 +92,6 @@ class AdOrbitClient:
                 backoff = min(backoff * 2, 120)
                 continue
             if missing_ok_statuses and response.status_code in missing_ok_statuses:
-                self._empty_500_streak = 0
                 return None
             body = (response.text or "").strip()
             if (
@@ -100,17 +100,20 @@ class AdOrbitClient:
                 and not body
             ):
                 self._empty_500_streak += 1
+                if self._empty_500_streak >= _EMPTY_500_STREAK_LIMIT:
+                    logger.error(
+                        "Ad Orbit returned %s empty 500s in a row for %s; failing the sync.",
+                        self._empty_500_streak,
+                        signed_uri,
+                    )
+                    response.raise_for_status()
                 logger.warning(
                     "Ad Orbit returned an empty 500 for %s (%s in a row); "
                     "treating it as not a slot item.",
                     signed_uri,
                     self._empty_500_streak,
                 )
-                if self._empty_500_streak >= _EMPTY_500_STREAK_LIMIT:
-                    response.raise_for_status()
-                return None
-            if response.status_code < 400:
-                self._empty_500_streak = 0
+                return _NOT_A_SLOT_500
             if response.status_code >= 400:
                 logger.error(
                     "Ad Orbit API error %s for %s: %s",
@@ -129,6 +132,7 @@ class AdOrbitClient:
         Slot lookups use the service-sale id. A line that is not a slot returns
         HTTP 404, ``{"error": "Item not found."}``, or an empty HTTP 500.
         HTTP 405, a 500 with a body, and five empty 500s in a row propagate.
+        A successful order-list page does not clear that streak.
         """
         payload = self.request(
             "GET",
@@ -136,6 +140,11 @@ class AdOrbitClient:
             missing_ok_statuses={404},
             empty_500_as_missing=True,
         )
+        if payload is _NOT_A_SLOT_500:
+            return None
+        # A 404, a not-found body, or a real slot breaks the empty-500 streak.
+        # Order-list pages must not: they succeed while this endpoint is down.
+        self._empty_500_streak = 0
         if not isinstance(payload, dict) or "id" not in payload:
             return None
         return payload
