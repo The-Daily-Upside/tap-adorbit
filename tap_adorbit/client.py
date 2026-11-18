@@ -12,9 +12,9 @@ import requests
 logger = logging.getLogger(__name__)
 
 # An empty 500 is Ad Orbit's response for a service sale that is not a slot.
-# After this many of them, re-fetch one slot that already loaded. That request
-# failing is an outage. The non-slot responses themselves are not.
-_KNOWN_SLOT_RECHECK_EVERY = 5
+# Non-slots arrive in long runs, so the known-good slot is re-fetched only
+# after this many of them. That request failing is an outage.
+_KNOWN_SLOT_RECHECK_EVERY = 100
 _NOT_A_SLOT_500 = object()
 
 
@@ -101,7 +101,7 @@ class AdOrbitClient:
                 and response.status_code == 500
                 and not body
             ):
-                logger.warning(
+                logger.debug(
                     "Ad Orbit returned an empty 500 for %s; treating it as not a slot item.",
                     signed_uri,
                 )
@@ -155,7 +155,7 @@ class AdOrbitClient:
         Slot lookups use the service-sale id. A line that is not a slot returns
         HTTP 404, ``{"error": "Item not found."}``, or an empty HTTP 500.
         HTTP 405 and a 500 with a body propagate. Empty 500s are not an outage
-        by themselves. After several of them, a slot that already loaded in
+        by themselves. After a long run of them, a slot that already loaded in
         this run is fetched again, and that request failing propagates.
         """
         payload = self.request(

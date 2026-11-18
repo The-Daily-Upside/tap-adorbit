@@ -3,7 +3,7 @@
 import pytest
 import requests
 
-from tap_adorbit.client import AdOrbitClient
+from tap_adorbit.client import AdOrbitClient, _KNOWN_SLOT_RECHECK_EVERY
 
 
 def test_extract_records_uses_endpoint_collection_key():
@@ -141,10 +141,12 @@ def test_empty_500s_fail_when_a_known_slot_stops_loading(monkeypatch):
     monkeypatch.setattr("tap_adorbit.client.requests.request", _request)
     client = AdOrbitClient("stage", "pub", "priv")
     assert client.get_optional(good)["channelId"] == 5
-    for sale_id in range(1, 5):
+    for sale_id in range(1, _KNOWN_SLOT_RECHECK_EVERY):
         assert client.get_optional(f"https://stage.api.adorbit.com/media-slot-item/{sale_id}") is None
     with pytest.raises(requests.HTTPError, match="empty HTTP 500") as raised:
-        client.get_optional("https://stage.api.adorbit.com/media-slot-item/5")
+        client.get_optional(
+            f"https://stage.api.adorbit.com/media-slot-item/{_KNOWN_SLOT_RECHECK_EVERY}"
+        )
     assert "500 Server Error" not in str(raised.value)
 
 
@@ -176,10 +178,12 @@ def test_recheck_reports_404_when_the_known_slot_is_missing(monkeypatch):
     monkeypatch.setattr("tap_adorbit.client.requests.request", _request)
     client = AdOrbitClient("stage", "pub", "priv")
     client.get_optional(good)
-    for sale_id in range(1, 5):
+    for sale_id in range(1, _KNOWN_SLOT_RECHECK_EVERY):
         client.get_optional(f"https://stage.api.adorbit.com/media-slot-item/{sale_id}")
     with pytest.raises(requests.HTTPError, match="HTTP 404") as raised:
-        client.get_optional("https://stage.api.adorbit.com/media-slot-item/5")
+        client.get_optional(
+            f"https://stage.api.adorbit.com/media-slot-item/{_KNOWN_SLOT_RECHECK_EVERY}"
+        )
     assert "500" not in str(raised.value)
 
 
@@ -198,17 +202,23 @@ def test_known_slot_still_loading_keeps_non_slot_500s(monkeypatch):
             return self._payload
 
     good = "https://stage.api.adorbit.com/media-slot-item/3877"
+    calls = {"good": 0}
 
     def _request(method, uri, headers, timeout):
         if uri == good:
+            calls["good"] += 1
             return _Response(200, {"id": 3877, "channelId": 5})
         return _Response(500)
 
     monkeypatch.setattr("tap_adorbit.client.requests.request", _request)
     client = AdOrbitClient("stage", "pub", "priv")
     assert client.get_optional(good)["id"] == 3877
-    for sale_id in range(1, 7):
+    for sale_id in range(1, 31):
         assert client.get_optional(f"https://stage.api.adorbit.com/media-slot-item/{sale_id}") is None
+    assert calls["good"] == 1
+    for sale_id in range(31, 2 * _KNOWN_SLOT_RECHECK_EVERY + 1):
+        assert client.get_optional(f"https://stage.api.adorbit.com/media-slot-item/{sale_id}") is None
+        assert calls["good"] == 1 + sale_id // _KNOWN_SLOT_RECHECK_EVERY
 
 
 def test_get_optional_ignores_not_found_payload(monkeypatch):
