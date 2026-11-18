@@ -5,10 +5,12 @@ from singer_sdk.typing import IntegerType, PropertiesList, Property, StringType
 
 from tap_adorbit.streams import (
     ActivitiesStream,
+    AdPositionsStream,
     CompaniesStream,
     CompanyAssetsStream,
     ContactsStream,
     EditorialsStream,
+    MediaSlotItemsStream,
     OrdersStream,
     PublicationsStream,
     SubscribersStream,
@@ -84,6 +86,8 @@ class TapAdOrbit(Tap):
             EditorialsStream(self),
             VendorsStream(self),
             CompanyAssetsStream(self),
+            AdPositionsStream(self),
+            MediaSlotItemsStream(self),
         ]
 
 

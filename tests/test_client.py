@@ -35,6 +35,67 @@ def test_pagination_params_omit_changedsince_when_not_set():
     assert params == {}
 
 
+def test_request_missing_ok_status_returns_none(monkeypatch):
+    class _Response:
+        status_code = 500
+        text = ""
+
+        def raise_for_status(self):
+            raise AssertionError("500 should be treated as a missing slot item")
+
+        def json(self):
+            raise AssertionError("empty 500 body is not JSON")
+
+    monkeypatch.setattr(
+        "tap_adorbit.client.requests.request",
+        lambda *args, **kwargs: _Response(),
+    )
+    client = AdOrbitClient("stage", "pub", "priv")
+    assert client.get_optional("https://stage.api.adorbit.com/media-slot-item/1") is None
+
+
+def test_get_optional_ignores_not_found_payload(monkeypatch):
+    client = AdOrbitClient("stage", "pub", "priv")
+    monkeypatch.setattr(client, "request", lambda *args, **kwargs: {"error": "Item not found."})
+    assert client.get_optional("https://stage.api.adorbit.com/media-slot-item/1") is None
+    monkeypatch.setattr(
+        client,
+        "request",
+        lambda *args, **kwargs: {"id": 3877, "channelId": 5},
+    )
+    assert client.get_optional("https://stage.api.adorbit.com/media-slot-item/3877")["channelId"] == 5
+
+
+def test_request_retries_gateway_errors_then_returns_json(monkeypatch):
+    calls = {"n": 0}
+
+    class _Response:
+        def __init__(self, status_code, payload=None):
+            self.status_code = status_code
+            self.text = "bad gateway" if status_code >= 400 else ""
+            self._payload = payload or {}
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise AssertionError(f"should have retried status {self.status_code}")
+
+        def json(self):
+            return self._payload
+
+    def _request(method, uri, headers, timeout):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            return _Response(502)
+        return _Response(200, {"ok": True})
+
+    monkeypatch.setattr("tap_adorbit.client.requests.request", _request)
+    monkeypatch.setattr("tap_adorbit.client.time.sleep", lambda _seconds: None)
+
+    client = AdOrbitClient("stage", "pub", "priv")
+    assert client.request("GET", "https://stage.api.adorbit.com/orders") == {"ok": True}
+    assert calls["n"] == 3
+
+
 def test_normalize_record_backfills_replication_timestamps():
     from tap_adorbit.streams import AdOrbitStream
 
