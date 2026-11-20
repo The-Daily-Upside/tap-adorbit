@@ -11,9 +11,9 @@ Team-facing Postgres views over the `adorbit` schema. Dagster should own creatio
 | Row filter | `WHERE is_deleted IS NOT TRUE` on every view |
 | Exclude from views | `is_deleted`, `_raw` |
 | JSON in base tables | Object/array API fields are stored as `text` (JSON strings) |
-| JSON in views | `NULLIF(btrim(col), '')::jsonb`; add extracted scalar columns where listed |
+| JSON in views | `adorbit.parse_jsonb(col)`; add extracted scalar columns where listed |
 
-Blank text becomes NULL. Dagster's view rebuild wraps any other non-JSON text (a bare URL, for example) as a JSON string before creating the views.
+`parse_jsonb` returns NULL for blank text, casts valid JSON, and wraps any other text as a JSON string. That includes a bare URL and malformed JSON such as `{oops}`. The check runs when the view is read, so a later sync cannot make the view fail. Postgres 14 has no try-cast, so this stays a function.
 
 ### `is_deleted` (set by tap)
 
@@ -102,7 +102,7 @@ Streams with only `id` (+ `is_deleted`, `_raw`) in the base table. Expose the fu
 
 | View | Source table | Columns |
 |------|--------------|---------|
-| `adorbit.v_subscribers` | `subscribers` | `id`, `record` (= `NULLIF(btrim(_raw), '')::jsonb`), `_sdc_*` |
+| `adorbit.v_subscribers` | `subscribers` | `id`, `record` (= `parse_jsonb(_raw)`), `_sdc_*` |
 | `adorbit.v_subscriptions` | `subscriptions` | same |
 | `adorbit.v_editorials` | `editorials` | same |
 | `adorbit.v_vendors` | `vendors` | same |
@@ -136,5 +136,5 @@ Grant `SELECT` on `adorbit.v_*` to `bi_user`, `bigquery_user`. Raw `adorbit.*` t
 
 - Run after Meltano sync creates/updates `adorbit` tables.
 - Re-run when tap adds columns (views with explicit column lists need updating).
-- `NULLIF(btrim(col), '')::jsonb` is safe on NULL and empty strings. The view rebuild wraps other non-JSON text before the views are created.
+- `parse_jsonb` returns NULL for blank text and wraps text that is not valid JSON. Views apply it on read, including after incremental syncs.
 - Periodic full refresh on the tap catches hard-deleted API records that never flip `is_deleted`.
