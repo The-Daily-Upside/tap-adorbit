@@ -37,6 +37,13 @@ Companies, contacts, and orders document `changedsince` with format `YYYY-MM-DD`
 | `vendors` | Not in PDF | Exists in HATEOAS root as `/vendors` |
 | `companyassets` | Not in PDF | Exists in HATEOAS root; returns `assets` collection |
 | `ad_positions` | GET `/ad-positions` | Placement names. `id` matches slot `channelId` |
+| `product_categories` | GET `/product-categories` | Lookup of id, name, description, type. `id` matches `services.category_id` and `scatID` on the media product catalogs |
+| `service_categories` | GET `/service-categories` | Service-type subset of product categories |
+| `services` | GET `/services` | Service products. `category_id` / `category_name` are the product category. The list is not incremental |
+| `media_slots` | GET `/media-slot` | Slot products. `scatID` is the product category. Not the per-sale `media_slot_items` stream |
+| `media_impressions` | GET `/media-impressions` | Impression products. `scatID` is the product category |
+| `media_reserved` | GET `/media-reserved` | Reserved products. `scatID` is the product category |
+| `media_targeted_displays` | GET `/media-targeted-display` | Targeted-display products. Empty in the TDU instance; `scatID` is the product category |
 | `media_slot_items` | GET `/media-slot-item/{id}` | No list route. Full scan of every order, not limited by `start_date`, so a truncate-and-reload still finds older active service sales. Not-found (404, `{"error": "Item not found."}`, or an empty HTTP 500) is skipped. HTTP 405 and a 500 with a body fail the sync. After a long run of empty 500s, a slot that already loaded in this run is fetched again, and that failure fails the sync. `channelId` is the scheduled placement. Dagster truncates the table before each full refresh; this scan then reloads only service sales that still exist |
 
 ## Schema strategy

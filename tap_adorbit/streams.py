@@ -106,6 +106,16 @@ class AdOrbitStream(Stream):
         record["_raw"] = raw_record
         return record
 
+    @staticmethod
+    def _stringify_scalars(record: Dict[str, Any]) -> None:
+        for key, value in list(record.items()):
+            if isinstance(value, bool) or value is None:
+                continue
+            if isinstance(value, float) and value.is_integer():
+                record[key] = str(int(value))
+            elif isinstance(value, (int, float)):
+                record[key] = str(value)
+
 
 class CompaniesStream(AdOrbitStream):
     name = "companies"
@@ -203,6 +213,80 @@ class AdPositionsStream(AdOrbitStream):
             yield {key: normalized[key] for key in allowed_keys if key in normalized}
 
 
+class AdOrbitCatalogStream(AdOrbitStream):
+    """Small product catalogs. Never send changedsince.
+
+    These lists are the product category and the products that carry it.
+    A changedsince filter would drop products the API does not consider
+    changed, and new categories would not line up with older service sales.
+    Numeric ids are stored as text so they join to serviceId and scatID.
+    ``_raw`` is captured before that coercion so it stays the API payload.
+    """
+
+    def get_records(self, context: Optional[dict]) -> Iterable[Dict[str, Any]]:
+        del context
+        allowed_keys = set(self.schema["properties"].keys())
+        for record in self._client.get_paginated(
+            self.endpoint_key,
+            limit=self.page_size,
+            changed_since=None,
+            records_key=self.records_key,
+        ):
+            raw_record = json.dumps(record)
+            self._stringify_scalars(record)
+            normalized = self._normalize_record(record, self.name)
+            normalized["_raw"] = raw_record
+            yield {key: normalized[key] for key in allowed_keys if key in normalized}
+
+
+class ProductCategoriesStream(AdOrbitCatalogStream):
+    name = "product_categories"
+    endpoint_key = "product-categories"
+    schema = STREAM_SCHEMAS["product_categories"]
+
+
+class ServiceCategoriesStream(AdOrbitCatalogStream):
+    name = "service_categories"
+    endpoint_key = "service-categories"
+    schema = STREAM_SCHEMAS["service_categories"]
+
+
+class ServicesStream(AdOrbitCatalogStream):
+    """Service-type products. category_id matches product_categories.id."""
+
+    name = "services"
+    endpoint_key = "services"
+    schema = STREAM_SCHEMAS["services"]
+
+
+class MediaSlotsStream(AdOrbitCatalogStream):
+    """Slot products. scatID is the product category. Distinct from slot items."""
+
+    name = "media_slots"
+    endpoint_key = "media-slot"
+    schema = STREAM_SCHEMAS["media_slots"]
+
+
+class MediaImpressionsStream(AdOrbitCatalogStream):
+    name = "media_impressions"
+    endpoint_key = "media-impressions"
+    schema = STREAM_SCHEMAS["media_impressions"]
+
+
+class MediaReservedStream(AdOrbitCatalogStream):
+    name = "media_reserved"
+    endpoint_key = "media-reserved"
+    schema = STREAM_SCHEMAS["media_reserved"]
+
+
+class MediaTargetedDisplaysStream(AdOrbitCatalogStream):
+    """Targeted-display products. Empty in this instance; scatID is the category."""
+
+    name = "media_targeted_displays"
+    endpoint_key = "media-targeted-display"
+    schema = STREAM_SCHEMAS["media_targeted_displays"]
+
+
 class MediaSlotItemsStream(AdOrbitStream):
     """One slot record per service-sale id.
 
@@ -241,16 +325,6 @@ class MediaSlotItemsStream(AdOrbitStream):
                 continue
             ids.append(str(sale["id"]))
         return ids
-
-    @staticmethod
-    def _stringify_scalars(record: Dict[str, Any]) -> None:
-        for key, value in list(record.items()):
-            if isinstance(value, bool) or value is None:
-                continue
-            if isinstance(value, float) and value.is_integer():
-                record[key] = str(int(value))
-            elif isinstance(value, (int, float)):
-                record[key] = str(value)
 
     def get_records(self, context: Optional[dict]) -> Iterable[Dict[str, Any]]:
         # Do not apply start_date or a bookmark. After the destination table

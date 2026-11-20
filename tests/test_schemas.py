@@ -43,6 +43,55 @@ def test_slot_channel_id_is_stored_as_text():
     assert record == {"id": "3877", "channelId": "5", "gross": "12.5"}
 
 
+def test_product_category_catalog_stringifies_ids_and_ignores_start_date():
+    from tap_adorbit.streams import ProductCategoriesStream
+    from tap_adorbit.tap import TapAdOrbit
+
+    tap = TapAdOrbit(
+        config={
+            "instance": "stage",
+            "public_key": "pub",
+            "private_key": "priv",
+            "start_date": "2020-01-01 00:00:00",
+        },
+        validate_config=False,
+        parse_env_config=False,
+    )
+    stream = ProductCategoriesStream(tap)
+    seen = {}
+
+    def _paginated(endpoint_key, limit=100, changed_since=None, records_key=None):
+        seen["endpoint_key"] = endpoint_key
+        seen["changed_since"] = changed_since
+        yield {
+            "id": 37,
+            "name": "Newsletter",
+            "description": None,
+            "type": "slot",
+        }
+
+    stream._client.get_paginated = _paginated
+    rows = list(stream.get_records(None))
+    assert seen == {"endpoint_key": "product-categories", "changed_since": None}
+    assert rows == [
+        {
+            "id": "37",
+            "name": "Newsletter",
+            "description": None,
+            "type": "slot",
+            "is_deleted": False,
+            "_raw": json.dumps(
+                {
+                    "id": 37,
+                    "name": "Newsletter",
+                    "description": None,
+                    "type": "slot",
+                }
+            ),
+        }
+    ]
+
+
 def test_service_sale_ids_are_stringified():
     order = {
         "serviceSales": [
