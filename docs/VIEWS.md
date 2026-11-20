@@ -11,14 +11,9 @@ Team-facing Postgres views over the `adorbit` schema. Dagster should own creatio
 | Row filter | `WHERE is_deleted IS NOT TRUE` on every view |
 | Exclude from views | `is_deleted`, `_raw` |
 | JSON in base tables | Object/array API fields are stored as `text` (JSON strings) |
-| JSON in views | Cast to `jsonb`; add extracted scalar columns where listed |
+| JSON in views | `adorbit.parse_jsonb(col)`; add extracted scalar columns where listed |
 
-### Helper function
-
-```sql
-adorbit.parse_jsonb(value text) -> jsonb
--- NULL or blank -> NULL; otherwise value::jsonb
-```
+`parse_jsonb` returns NULL for blank text and casts valid JSON. Text Postgres cannot store as jsonb — a bare URL, malformed JSON such as `{oops}`, a NUL escape, or an out-of-range number — is wrapped as a JSON string, including any surrounding spaces. The check runs when the view is read, so a later sync cannot make the view fail. Postgres 14 has no try-cast, so this stays a function.
 
 ### `is_deleted` (set by tap)
 
@@ -141,5 +136,5 @@ Grant `SELECT` on `adorbit.v_*` to `bi_user`, `bigquery_user`. Raw `adorbit.*` t
 
 - Run after Meltano sync creates/updates `adorbit` tables.
 - Re-run when tap adds columns (views with explicit column lists need updating).
-- `parse_jsonb` is safe on NULL/empty strings.
+- `parse_jsonb` returns NULL for blank text and wraps text Postgres cannot store as jsonb. Views apply it on read, including after incremental syncs.
 - Periodic full refresh on the tap catches hard-deleted API records that never flip `is_deleted`.
