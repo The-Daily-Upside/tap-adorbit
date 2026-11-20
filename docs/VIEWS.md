@@ -13,7 +13,7 @@ Team-facing Postgres views over the `adorbit` schema. Dagster should own creatio
 | JSON in base tables | Object/array API fields are stored as `text` (JSON strings) |
 | JSON in views | `adorbit.parse_jsonb(col)`; add extracted scalar columns where listed |
 
-`parse_jsonb` returns NULL for blank text and casts valid JSON. Text Postgres cannot store as jsonb — a bare URL, malformed JSON such as `{oops}`, a NUL escape, or an out-of-range number — is wrapped as a JSON string. The check runs when the view is read, so a later sync cannot make the view fail. Postgres 14 has no try-cast, so this stays a function.
+`parse_jsonb` returns NULL for blank text and casts valid JSON. Text Postgres cannot store as jsonb — a bare URL, malformed JSON such as `{oops}`, a NUL escape, or an out-of-range number — is wrapped as a JSON string, including any surrounding spaces. The check runs when the view is read, so a later sync cannot make the view fail. Postgres 14 has no try-cast, so this stays a function.
 
 ### `is_deleted` (set by tap)
 
