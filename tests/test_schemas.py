@@ -82,7 +82,7 @@ def test_product_category_catalog_stringifies_ids_and_ignores_start_date():
             "is_deleted": False,
             "_raw": json.dumps(
                 {
-                    "id": "37",
+                    "id": 37,
                     "name": "Newsletter",
                     "description": None,
                     "type": "slot",

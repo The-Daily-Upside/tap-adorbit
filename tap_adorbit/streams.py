@@ -220,6 +220,7 @@ class AdOrbitCatalogStream(AdOrbitStream):
     A changedsince filter would drop products the API does not consider
     changed, and new categories would not line up with older service sales.
     Numeric ids are stored as text so they join to serviceId and scatID.
+    ``_raw`` is captured before that coercion so it stays the API payload.
     """
 
     def get_records(self, context: Optional[dict]) -> Iterable[Dict[str, Any]]:
@@ -231,8 +232,10 @@ class AdOrbitCatalogStream(AdOrbitStream):
             changed_since=None,
             records_key=self.records_key,
         ):
+            raw_record = json.dumps(record)
             self._stringify_scalars(record)
             normalized = self._normalize_record(record, self.name)
+            normalized["_raw"] = raw_record
             yield {key: normalized[key] for key in allowed_keys if key in normalized}
 
 
