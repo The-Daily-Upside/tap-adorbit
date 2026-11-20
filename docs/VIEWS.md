@@ -11,14 +11,9 @@ Team-facing Postgres views over the `adorbit` schema. Dagster should own creatio
 | Row filter | `WHERE is_deleted IS NOT TRUE` on every view |
 | Exclude from views | `is_deleted`, `_raw` |
 | JSON in base tables | Object/array API fields are stored as `text` (JSON strings) |
-| JSON in views | Cast to `jsonb`; add extracted scalar columns where listed |
+| JSON in views | `NULLIF(btrim(col), '')::jsonb`; add extracted scalar columns where listed |
 
-### Helper function
-
-```sql
-adorbit.parse_jsonb(value text) -> jsonb
--- NULL or blank -> NULL; otherwise value::jsonb
-```
+Blank text becomes NULL. Dagster's view rebuild wraps any other non-JSON text (a bare URL, for example) as a JSON string before creating the views.
 
 ### `is_deleted` (set by tap)
 
@@ -107,7 +102,7 @@ Streams with only `id` (+ `is_deleted`, `_raw`) in the base table. Expose the fu
 
 | View | Source table | Columns |
 |------|--------------|---------|
-| `adorbit.v_subscribers` | `subscribers` | `id`, `record` (= `parse_jsonb(_raw)`), `_sdc_*` |
+| `adorbit.v_subscribers` | `subscribers` | `id`, `record` (= `NULLIF(btrim(_raw), '')::jsonb`), `_sdc_*` |
 | `adorbit.v_subscriptions` | `subscriptions` | same |
 | `adorbit.v_editorials` | `editorials` | same |
 | `adorbit.v_vendors` | `vendors` | same |
@@ -141,5 +136,5 @@ Grant `SELECT` on `adorbit.v_*` to `bi_user`, `bigquery_user`. Raw `adorbit.*` t
 
 - Run after Meltano sync creates/updates `adorbit` tables.
 - Re-run when tap adds columns (views with explicit column lists need updating).
-- `parse_jsonb` is safe on NULL/empty strings.
+- `NULLIF(btrim(col), '')::jsonb` is safe on NULL and empty strings. The view rebuild wraps other non-JSON text before the views are created.
 - Periodic full refresh on the tap catches hard-deleted API records that never flip `is_deleted`.
