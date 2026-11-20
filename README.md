@@ -17,6 +17,15 @@
 | `editorials` | `/editorials` | — |
 | `vendors` | `/vendors` | — |
 | `companyassets` | `/companyassets` | — |
+| `ad_positions` | `/ad-positions` | — |
+| `media_slot_items` | `/media-slot-item/{id}` | — |
+| `product_categories` | `/product-categories` | — |
+| `service_categories` | `/service-categories` | — |
+| `services` | `/services` | — |
+| `media_slots` | `/media-slot` | — |
+| `media_impressions` | `/media-impressions` | — |
+| `media_reserved` | `/media-reserved` | — |
+| `media_targeted_displays` | `/media-targeted-display` | — |
 
 Each stream declares explicit columns from live API probes plus a `_raw` JSON column containing the full API record. This ensures `target-postgres` loads typed fields while preserving future or tenant-specific fields in `_raw`.
 
